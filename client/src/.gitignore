@@ -1,0 +1,11 @@
+# node modules
+**/node_modules/
+
+# Vite build
+dist/
+
+# Logdateien
+*.log
+
+# VS Code settings (optional)
+.vscode/
