@@ -1,0 +1,227 @@
+.game-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px;
+  height: 100vh;
+  background-color: #1a1a1a;
+  color: white;
+}
+
+.error-message {
+  background-color: #ff4444;
+  color: white;
+  padding: 10px 20px;
+  border-radius: 5px;
+  margin-bottom: 20px;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.game-info {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.players {
+  display: flex;
+  gap: 20px;
+  margin-top: 10px;
+}
+
+.player {
+  padding: 10px 20px;
+  background-color: #333;
+  border-radius: 5px;
+  transition: background-color 0.3s;
+}
+
+.player.current {
+  background-color: #4CAF50;
+}
+
+.game-board {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 30px;
+  width: 100%;
+  max-width: 800px;
+}
+
+.current-trick {
+  display: flex;
+  gap: 10px;
+  min-height: 150px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.played-card {
+  width: 80px;
+  height: 120px;
+  background-color: white;
+  color: black;
+  border-radius: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 1.2em;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.player-hand {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 20px;
+  background-color: #333;
+  border-radius: 10px;
+  min-height: 150px;
+}
+
+.card {
+  width: 80px;
+  height: 120px;
+  background-color: white;
+  color: black;
+  border-radius: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 1.2em;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+.card.playable:hover {
+  transform: translateY(-10px);
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.game {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.current-trick {
+  background-color: #1b5e20;
+  padding: 20px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.current-trick h3 {
+  color: white;
+  margin-top: 0;
+  margin-bottom: 15px;
+}
+
+.current-trick .cards {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.played-card {
+  background-color: white;
+  padding: 10px;
+  border-radius: 5px;
+  min-width: 60px;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.played-card small {
+  display: block;
+  font-size: 0.8em;
+  color: #666;
+  margin-top: 5px;
+}
+
+.hands-container {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.hands-container.test-mode {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.player-hand {
+  background-color: #f5f5f5;
+  padding: 20px;
+  border-radius: 10px;
+  transition: background-color 0.3s;
+}
+
+.player-hand.active {
+  background-color: #e8f5e9;
+  box-shadow: 0 0 10px rgba(76, 175, 80, 0.3);
+}
+
+.player-hand h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: #333;
+  text-align: center;
+}
+
+.player-hand .cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.card {
+  background-color: white;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  padding: 10px;
+  min-width: 60px;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:not(:disabled):hover {
+  transform: translateY(-5px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.card:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Farben für die Kartensymbole */
+.card[data-suit="♥"],
+.card[data-suit="♦"] {
+  color: #d32f2f;
+}
+
+.card[data-suit="♠"],
+.card[data-suit="♣"] {
+  color: #212121;
+} 
