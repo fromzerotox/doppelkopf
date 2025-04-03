@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import Lobby from './components/Lobby';
-import GameView from './components/GameView';
+import GameView from './components/game/Game';
 import './App.css';
 
-function App({ socket, myId, isConnected }) {
+function App({ socket, myId, isConnected, isTestMode = false }) {
   const [gameState, setGameState] = useState(null);
   const [availableGames, setAvailableGames] = useState([]);
   const [gameSettings, setGameSettings] = useState({
@@ -15,94 +16,159 @@ function App({ socket, myId, isConnected }) {
   const [messages, setMessages] = useState([]);
 
   useEffect(() => {
-    if (socket && isConnected) {
-      // Request initial games list
-      socket.emit('requestGames');
+    if (!socket || !isConnected) return;
 
-      socket.on('availableGames', (games) => {
-        // Filter out test games in production mode
-        const filteredGames = games.filter(game => !game.isTestMode);
-        setAvailableGames(filteredGames);
+    console.log('App mounted with:', { myId, isConnected, isTestMode });
+
+    socket.emit('requestGames');
+
+    socket.on('availableGames', (games) => {
+      console.log('Received all games:', games);
+      console.log('Current isTestMode:', isTestMode);
+      // Filter games based on test mode, treating undefined as false
+      const filteredGames = games.filter(game => {
+        const gameIsTestMode = Boolean(game.isTestMode);
+        const ourIsTestMode = Boolean(isTestMode);
+        console.log(`Game ${game.id}: isTestMode=${gameIsTestMode}, our isTestMode=${ourIsTestMode}`);
+        return gameIsTestMode === ourIsTestMode;
       });
+      console.log('Filtered games for our mode:', filteredGames);
+      setAvailableGames(filteredGames);
+    });
 
-      socket.on('gameCreated', (game) => {
-        // Only add non-test games to available games
-        if (!game.isTestMode) {
-          setAvailableGames(prev => [...prev, game]);
-          if (game.createdBy === myId) {
-            setCurrentGame(game);
-            setMessages([]);
-          }
-        }
-      });
+    socket.on('gameCreated', (game) => {
+      console.log('Game created:', game);
+      console.log('Comparing createdBy:', { gameCreatedBy: game.createdBy, myId });
+      // Only handle games matching our mode (test/production)
+      if (game.isTestMode === isTestMode) {
+        setAvailableGames(prev => {
+          const exists = prev.some(g => g.id === game.id);
+          return exists ? prev : [...prev, game];
+        });
 
-      socket.on('gameClosed', ({ gameId }) => {
-        setAvailableGames(prev => prev.filter(game => game.id !== gameId));
-        if (currentGame?.id === gameId) {
-          setCurrentGame(null);
+        // If we created the game, join it automatically
+        if (game.createdBy === myId) {
+          console.log('Auto-joining as game creator');
+          setCurrentGame(game);
           setMessages([]);
+          
+          socket.emit('joinGame', {
+            gameId: game.id,
+            playerId: myId,
+            playerName: socket.playerName
+          });
         }
-      });
+      }
+    });
 
-      socket.on('playerJoined', ({ gameId, players }) => {
-        setAvailableGames(prev => 
-          prev.map(game => 
-            game.id === gameId ? { ...game, players } : game
-          )
-        );
-        if (currentGame?.id === gameId) {
-          setCurrentGame(prev => ({ ...prev, players }));
-        }
-      });
+    socket.on('gameJoined', (game) => {
+      console.log('Game joined:', game);
+      console.log('Game creator check:', { gameCreatedBy: game.createdBy, myId });
+      // Set current game regardless of who joined
+      setCurrentGame(game);
+      // Update available games list
+      setAvailableGames(prev => 
+        prev.map(g => g.id === game.id ? game : g)
+      );
+    });
 
-      socket.on('playerLeft', ({ gameId, players }) => {
-        setAvailableGames(prev => 
-          prev.map(game => 
-            game.id === gameId ? { ...game, players } : game
-          )
-        );
-        if (currentGame?.id === gameId) {
-          setCurrentGame(prev => ({ ...prev, players }));
-        }
-      });
+    socket.on('playerJoined', ({ gameId, players }) => {
+      console.log('Player joined:', { gameId, players });
+      // Update current game if we're in it
+      if (currentGame?.id === gameId || players.some(p => p.id === myId)) {
+        setCurrentGame(prev => ({
+          ...prev,
+          players: players
+        }));
+      }
+      // Update available games list
+      setAvailableGames(prev => 
+        prev.map(game => 
+          game.id === gameId ? { ...game, players } : game
+        )
+      );
+    });
 
-      socket.on('gameStarted', (data) => {
-        setGameState(data);
+    socket.on('playerLeft', ({ gameId, players }) => {
+      console.log('Player left:', { gameId, players });
+      if (currentGame?.id === gameId) {
+        setCurrentGame(prev => ({
+          ...prev,
+          players: players
+        }));
+      }
+      setAvailableGames(prev => 
+        prev.map(game => 
+          game.id === gameId ? { ...game, players } : game
+        )
+      );
+    });
+
+    socket.on('gameClosed', ({ gameId }) => {
+      console.log('Game closed:', gameId);
+      setAvailableGames(prev => prev.filter(game => game.id !== gameId));
+      if (currentGame?.id === gameId) {
         setCurrentGame(null);
         setMessages([]);
-      });
+      }
+    });
 
-      socket.on('chatMessage', ({ gameId, playerId, playerName, message }) => {
-        if (currentGame?.id === gameId) {
-          setMessages(prev => [...prev, { playerId, playerName, message }]);
-        }
-      });
+    socket.on('gameStarted', (data) => {
+      console.log('Game started:', data);
+      setGameState(data);
+      setCurrentGame(null);
+      setMessages([]);
+    });
 
-      return () => {
-        socket.off('availableGames');
-        socket.off('gameCreated');
-        socket.off('gameClosed');
-        socket.off('playerJoined');
-        socket.off('playerLeft');
-        socket.off('gameStarted');
-        socket.off('chatMessage');
-      };
-    }
-  }, [socket, isConnected, currentGame, myId]);
+    socket.on('chatMessage', ({ gameId, playerId, playerName, message }) => {
+      if (currentGame?.id === gameId) {
+        setMessages(prev => [...prev, { playerId, playerName, message }]);
+      }
+    });
+
+    return () => {
+      socket.off('availableGames');
+      socket.off('gameCreated');
+      socket.off('gameJoined');
+      socket.off('gameClosed');
+      socket.off('playerJoined');
+      socket.off('playerLeft');
+      socket.off('gameStarted');
+      socket.off('chatMessage');
+    };
+  }, [socket, isConnected, currentGame?.id, myId, isTestMode]);
+
+  const handleCreateGame = () => {
+    if (!socket) return;
+    socket.emit('createGame', {
+      ...gameSettings,
+      isTestMode
+    });
+  };
 
   const handleJoinGame = (gameId) => {
+    if (!socket) return;
+    console.log(`Attempting to join game ${gameId}`);
     socket.emit('joinGame', {
       gameId,
       playerId: myId,
       playerName: socket.playerName
     });
-    const game = availableGames.find(g => g.id === gameId);
-    setCurrentGame(game);
-    setMessages([]);
   };
 
-  const handleCreateGame = () => {
-    socket.emit('createGame', gameSettings);
+  const handleLeaveGame = () => {
+    if (!currentGame || !socket) return;
+    
+    if (currentGame.createdBy === myId) {
+      socket.emit('closeGame', currentGame.id);
+    } else {
+      socket.emit('leaveGame', {
+        gameId: currentGame.id,
+        playerId: myId
+      });
+    }
+    setCurrentGame(null);
+    setMessages([]);
   };
 
   const handleSettingChange = (setting, value) => {
@@ -122,37 +188,18 @@ function App({ socket, myId, isConnected }) {
     }
   };
 
-  const handleCloseGame = () => {
-    if (currentGame && socket) {
-      socket.emit('closeGame', currentGame.id);
-      setCurrentGame(null);
-      setMessages([]);
-    }
-  };
-
-  const handleLeaveGame = () => {
-    if (currentGame && socket) {
-      if (currentGame.createdBy === myId) {
-        // If game leader, close the game
-        socket.emit('closeGame', currentGame.id);
-      } else {
-        // If regular player, leave the game
-        socket.emit('leaveGame', {
-          gameId: currentGame.id,
-          playerId: myId
-        });
-      }
-      setCurrentGame(null);
-      setMessages([]);
-    }
-  };
-
-  if (!isConnected) {
-    return <div>Verbindung zum Server wird hergestellt...</div>;
-  }
-
+  // Render game interface
   return (
     <div className="app">
+      {!isTestMode && (
+        <nav>
+          <ul>
+            <li><Link to="/">Lobby</Link></li>
+            <li><Link to="/test">Test-Modus</Link></li>
+          </ul>
+        </nav>
+      )}
+
       {!gameState ? (
         <Lobby
           availableGames={availableGames}
@@ -171,7 +218,7 @@ function App({ socket, myId, isConnected }) {
           gameState={gameState}
           myId={myId}
           onPlayCard={handlePlayCard}
-          onCloseGame={handleCloseGame}
+          onCloseGame={handleLeaveGame}
         />
       )}
     </div>

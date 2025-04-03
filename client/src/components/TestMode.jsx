@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import App from '../App';
+import './TestMode.css';
 
 function TestMode() {
   const [sockets, setSockets] = useState([]);
   const [testPlayers, setTestPlayers] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [playerCount, setPlayerCount] = useState(4);
-  const [gameStarted, setGameStarted] = useState(false);
   const [currentGame, setCurrentGame] = useState(null);
 
   const createTestPlayer = async (name, index) => {
@@ -27,67 +27,67 @@ function TestMode() {
         };
 
         socket.emit('join', name);
-        
-        if (index === 0) {
-          socket.once('gameCreated', (game) => {
-            setCurrentGame(game);
-            resolve(player);
-          });
+        resolve(player);
 
-          socket.emit('createGame', {
-            playWithNine: false,
-            zweiteDulleSchlaegtErsteDulle: true,
-            mitSchaf: true,
-            isTestMode: true
-          });
-        } else {
-          const handleAvailableGames = (games) => {
-            const testGames = games.filter(game => game.isTestMode);
-            if (testGames.length > 0) {
-              const game = testGames[0];
-              socket.emit('joinGame', {
-                gameId: game.id,
-                playerId: player.id,
-                playerName: name
-              });
-              socket.off('availableGames', handleAvailableGames);
-              resolve(player);
+        // Common event handlers for all players
+        socket.on('playerJoined', ({ gameId, players }) => {
+          console.log(`${name} received player update for game ${gameId}:`, players);
+          setCurrentGame(prev => {
+            if (prev && prev.id === gameId) {
+              return { ...prev, players };
             }
-          };
-
-          socket.on('availableGames', handleAvailableGames);
-          socket.emit('requestGames');
-        }
-
-        // Listen for game start
-        socket.on('gameStarted', (data) => {
-          console.log(`Game started for player ${name}`, data);
-          setGameStarted(true);
+            return prev;
+          });
         });
 
-        // Listen for errors
+        socket.on('gameState', (game) => {
+          console.log(`${name} received game state update:`, game);
+          if (game.isTestMode) {
+            setCurrentGame(game);
+          }
+        });
+
         socket.on('error', (error) => {
           console.error(`Error for player ${name}:`, error);
         });
 
-        // Listen for disconnect
         socket.on('disconnect', () => {
           console.log(`Player ${name} disconnected`);
         });
-
-        // Listen for chat messages
-        socket.on('chatMessage', (data) => {
-          console.log(`Chat message for player ${name}:`, data);
-        });
       });
     });
+  };
+
+  const createGame = () => {
+    if (sockets.length > 0) {
+      const creatorSocket = sockets[0];
+      creatorSocket.once('gameCreated', (game) => {
+        console.log('Game created:', game);
+        setCurrentGame(game);
+        
+        // Other players join the game
+        sockets.slice(1).forEach(socket => {
+          socket.emit('joinGame', {
+            gameId: game.id,
+            playerId: socket.id,
+            playerName: socket.playerName
+          });
+        });
+      });
+
+      creatorSocket.emit('createGame', {
+        playWithNine: false,
+        zweiteDulleSchlaegtErsteDulle: true,
+        mitSchaf: true,
+        isTestMode: true
+      });
+    }
   };
 
   const closeAllTestGames = () => {
     if (sockets.length > 0) {
       sockets[0].emit('closeAllTestGames');
       setCurrentGame(null);
-      setGameStarted(false);
     }
   };
 
@@ -101,13 +101,16 @@ function TestMode() {
       
       // Create players sequentially
       for (let i = 0; i < playerCount; i++) {
+        console.log(`Creating player ${i + 1}`);
         const player = await createTestPlayer(`Spieler ${i + 1}`, i);
         players.push(player);
         setSockets(prev => [...prev, player.socket]);
+        // Kurze Pause zwischen den Spielern
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
       
       setTestPlayers(players);
-      setGameStarted(false);
+      console.log('All players created and connected');
     } catch (error) {
       console.error('Error starting test mode:', error);
       stopTestMode();
@@ -124,12 +127,12 @@ function TestMode() {
     setSockets([]);
     setTestPlayers([]);
     setIsRunning(false);
-    setGameStarted(false);
     setCurrentGame(null);
   };
 
   const handleStartGame = () => {
     if (currentGame && sockets[0]) {
+      console.log('Starting game with ID:', currentGame.id);
       sockets[0].emit('startGame', currentGame.id);
     }
   };
@@ -139,13 +142,6 @@ function TestMode() {
       stopTestMode();
     };
   }, []);
-
-  const getGridColumns = () => {
-    if (gameStarted) {
-      return '1fr';
-    }
-    return 'repeat(2, 1fr)';
-  };
 
   return (
     <div className="test-mode">
@@ -174,6 +170,11 @@ function TestMode() {
               <button onClick={closeAllTestGames} className="test-reset-btn">
                 Alle Testspiele Schließen
               </button>
+              {!currentGame && (
+                <button onClick={createGame} className="test-create-game-btn">
+                  Testspiel Erstellen
+                </button>
+              )}
               {currentGame && currentGame.players.length === 4 && (
                 <button onClick={handleStartGame} className="test-start-game-btn">
                   Spiel Starten
@@ -184,14 +185,15 @@ function TestMode() {
         </div>
       </div>
       {isRunning && (
-        <div className="test-views" style={{ gridTemplateColumns: getGridColumns() }}>
+        <div className="test-views">
           {testPlayers.map(player => (
-            <div key={player.id} className={`test-player-view ${gameStarted ? 'game-started' : ''}`}>
+            <div key={player.id} className="test-player-view">
               <h3>{player.name}</h3>
               <App 
                 socket={player.socket} 
                 myId={player.id} 
                 isConnected={player.socket.connected}
+                isTestMode={true}
               />
             </div>
           ))}

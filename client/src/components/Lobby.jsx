@@ -15,6 +15,10 @@ function Lobby({
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef(null);
 
+  useEffect(() => {
+    console.log('Lobby mounted with:', { myId, currentGame });
+  }, [myId, currentGame]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -41,6 +45,11 @@ function Lobby({
 
   const handleStartGame = () => {
     if (currentGame && socket) {
+      console.log('Starting game with:', { 
+        gameId: currentGame.id, 
+        myId, 
+        createdBy: currentGame.createdBy 
+      });
       socket.emit('startGame', currentGame.id);
     }
   };
@@ -57,6 +66,12 @@ function Lobby({
   };
 
   const isGameLeader = currentGame?.createdBy === myId;
+  console.log('Game leader check:', { 
+    createdBy: currentGame?.createdBy, 
+    myId, 
+    isGameLeader,
+    currentGame 
+  });
 
   return (
     <div className="lobby">
@@ -73,10 +88,17 @@ function Lobby({
             </div>
             <div className="game-players">
               <h4>Spieler ({currentGame.players.length}/4):</h4>
+              {console.log('Current game players:', JSON.stringify(currentGame.players, null, 2))}
               <ul>
-                {currentGame.players.map(player => (
-                  <li key={player.id}>{player.name}</li>
-                ))}
+                {Array.isArray(currentGame.players) ? 
+                  currentGame.players.map(player => {
+                    console.log('Rendering player:', player);
+                    return (
+                      <li key={player.id}>{player.name}</li>
+                    );
+                  })
+                  : <li>Keine Spieler gefunden</li>
+                }
               </ul>
             </div>
             <div className="game-controls">

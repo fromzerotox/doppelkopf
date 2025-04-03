@@ -48,6 +48,7 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   socket.on('join', (name) => {
+    console.log(`Player ${name} joining with socket ID ${socket.id}`);
     players.set(socket.id, { id: socket.id, name, socketId: socket.id });
     socket.playerName = name;
     
@@ -57,9 +58,15 @@ io.on('connection', (socket) => {
       .map(game => ({
         id: game.id,
         settings: game.settings,
-        players: game.players,
-        createdBy: game.createdBy
+        players: game.players.map(p => ({
+          id: p.id,
+          name: p.name || players.get(p.id)?.name || 'Unbekannt'
+        })),
+        createdBy: game.createdBy,
+        isTestMode: game.isTestMode
       }));
+    
+    console.log('Sending available games to new player:', availableGames);
     socket.emit('availableGames', availableGames);
   });
 
@@ -97,73 +104,195 @@ io.on('connection', (socket) => {
     socket.emit('availableGames', availableGames);
   });
 
+  // Helper function to check if a player already has created a game
+  function hasExistingGame(playerId) {
+    for (const [_, game] of games) {
+      if (game.createdBy === playerId && !game.started) {
+        return game;
+      }
+    }
+    return null;
+  }
+
+  // Helper function to clean up any existing games for a player
+  function cleanupExistingGames(playerId) {
+    for (const [gameId, game] of games) {
+      if (game.createdBy === playerId) {
+        games.delete(gameId);
+        io.to(gameId).emit('gameClosed', { gameId });
+        console.log(`Cleaned up existing game ${gameId} for player ${playerId}`);
+      }
+    }
+  }
+
   socket.on('createGame', (gameSettings) => {
+    // Check if player already has created a game
+    const existingGame = hasExistingGame(socket.id);
+    if (existingGame) {
+      socket.emit('error', { 
+        message: 'Du hast bereits ein aktives Spiel erstellt. Schließe zuerst das bestehende Spiel.' 
+      });
+      return;
+    }
+
     const gameId = Date.now().toString();
     const game = {
       id: gameId,
       settings: gameSettings,
-      players: [{ id: socket.id, name: socket.playerName }],
+      players: [], // Start with empty players array
       createdBy: socket.id,
-      isTestMode: gameSettings.isTestMode || false
+      isTestMode: gameSettings.isTestMode || false,
+      started: false
     };
+
     games.set(gameId, game);
-    socket.join(gameId);
-    io.emit('gameCreated', game);
+    
+    console.log(`Game ${gameId} created by ${socket.playerName}`);
+
+    // Broadcast game creation to all clients
+    io.emit('gameCreated', {
+      id: game.id,
+      settings: game.settings,
+      players: [],
+      createdBy: game.createdBy,
+      isTestMode: game.settings.isTestMode
+    });
+
+    // Automatically join the creator to the game
+    handleJoinGame(socket, {
+      gameId,
+      playerId: socket.id,
+      playerName: socket.playerName
+    });
+
+    // Update available games
+    broadcastAvailableGames();
   });
 
-  socket.on('joinGame', ({ gameId, playerId, playerName }) => {
+  // Helper function to handle joining a game
+  function handleJoinGame(socket, { gameId, playerId, playerName }) {
     const game = games.get(gameId);
     if (!game) {
       socket.emit('error', { message: 'Spiel nicht gefunden' });
       return;
     }
 
-    if (game.players.length >= 4) {
+    console.log('Join game attempt:', {
+      gameId,
+      playerId,
+      playerName,
+      currentPlayers: game.players.map(p => ({ id: p.id, name: p.name }))
+    });
+
+    // Check if player is already in the game
+    const existingPlayerIndex = game.players.findIndex(p => p.id === playerId);
+    if (existingPlayerIndex !== -1) {
+      // Update player name if it's missing
+      if (!game.players[existingPlayerIndex].name) {
+        game.players[existingPlayerIndex].name = playerName;
+      }
+      
+      // Always join the socket room, even if already in the game
+      socket.join(gameId);
+      
+      console.log('Player already in game:', {
+        gameId,
+        player: game.players[existingPlayerIndex]
+      });
+
+      // Send game state to the rejoining player
+      socket.emit('gameJoined', {
+        id: game.id,
+        settings: game.settings,
+        players: game.players,
+        createdBy: game.createdBy,
+        isTestMode: game.settings.isTestMode,
+        started: game.started
+      });
+
+      // Notify all players about the current player list
+      io.to(gameId).emit('playerJoined', {
+        gameId,
+        players: game.players
+      });
+      return;
+    }
+
+    // For test mode games, allow joining even if the game appears full
+    if (game.players.length >= 4 && !game.settings.isTestMode) {
       socket.emit('error', { message: 'Spiel ist bereits voll' });
       return;
     }
 
-    if (game.players.some(p => p.id === playerId)) {
-      socket.emit('error', { message: 'Spieler ist bereits im Spiel' });
-      return;
-    }
-
-    game.players.push({ id: playerId, name: playerName });
+    // Add the new player with complete information
+    const newPlayer = { 
+      id: playerId, 
+      name: playerName || players.get(playerId)?.name || 'Unbekannt'
+    };
+    game.players.push(newPlayer);
+    
+    // Join the socket room
     socket.join(gameId);
 
-    // Notify all players in the game about the new player
+    console.log('Player joined game:', {
+      gameId,
+      newPlayer,
+      totalPlayers: game.players.length,
+      allPlayers: game.players.map(p => ({ id: p.id, name: p.name }))
+    });
+
+    // Update the game in the games Map
+    games.set(gameId, game);
+
+    // Send game state to the joining player
+    socket.emit('gameJoined', {
+      id: game.id,
+      settings: game.settings,
+      players: game.players,
+      createdBy: game.createdBy,
+      isTestMode: game.settings.isTestMode,
+      started: game.started
+    });
+
+    // Notify all players about the updated player list
     io.to(gameId).emit('playerJoined', {
       gameId,
       players: game.players
     });
 
     // Update available games for all clients
-    const availableGames = Array.from(games.values())
-      .filter(g => g.players.length < 4 && !g.started)
-      .map(g => ({
-        id: g.id,
-        settings: g.settings,
-        players: g.players,
-        createdBy: g.createdBy
-      }));
-    io.emit('availableGames', availableGames);
+    broadcastAvailableGames();
+  }
+
+  socket.on('joinGame', ({ gameId, playerId, playerName }) => {
+    handleJoinGame(socket, { gameId, playerId, playerName });
   });
 
   socket.on('chatMessage', ({ gameId, message }) => {
     const game = games.get(gameId);
     if (!game) {
-      socket.emit('error', 'Spiel nicht gefunden');
-      return;
-    }
-    if (!game.players.some(p => p.id === socket.id)) {
-      socket.emit('error', 'Du bist nicht in diesem Spiel');
+      socket.emit('error', { message: 'Spiel nicht gefunden' });
       return;
     }
 
+    const player = game.players.find(p => p.id === socket.id);
+    if (!player) {
+      socket.emit('error', { message: 'Du bist nicht in diesem Spiel' });
+      return;
+    }
+
+    console.log(`Chat message in game ${gameId} from ${player.name}: ${message}`);
+
+    // Make sure the sender is in the room before broadcasting
+    if (!socket.rooms.has(gameId)) {
+      socket.join(gameId);
+    }
+
+    // Broadcast the message to all players in the game room
     io.to(gameId).emit('chatMessage', {
       gameId,
       playerId: socket.id,
-      playerName: socket.playerName,
+      playerName: player.name,
       message
     });
   });
@@ -205,53 +334,119 @@ io.on('connection', (socket) => {
   socket.on('startGame', (gameId) => {
     const game = games.get(gameId);
     if (!game) {
-      socket.emit('error', 'Spiel nicht gefunden');
-      return;
-    }
-    if (game.createdBy !== socket.id) {
-      socket.emit('error', 'Nur der Ersteller kann das Spiel starten');
-      return;
-    }
-    if (game.players.length < 4) {
-      socket.emit('error', 'Mindestens 4 Spieler benötigt');
+      socket.emit('error', { message: 'Spiel nicht gefunden' });
       return;
     }
 
-    startGame(gameId);
+    console.log('Attempting to start game:', {
+      gameId,
+      playerCount: game.players.length,
+      players: game.players.map(p => ({ id: p.id, name: p.name })),
+      creator: game.createdBy,
+      requestingPlayer: socket.id,
+      isCreator: game.createdBy === socket.id
+    });
+
+    // Prüfe, ob der anfragende Spieler der Spielleiter ist
+    if (game.createdBy !== socket.id) {
+      console.log('Start game rejected: Not the game creator');
+      socket.emit('error', { message: 'Nur der Spielleiter kann das Spiel starten' });
+      return;
+    }
+
+    // Prüfe, ob genau 4 Spieler anwesend sind
+    const validPlayers = game.players.filter(p => p.id && p.name);
+    if (validPlayers.length !== 4) {
+      console.log('Start game rejected: Invalid player count', {
+        validPlayers: validPlayers.length,
+        expectedPlayers: 4,
+        players: validPlayers
+      });
+      socket.emit('error', { 
+        message: `Es müssen genau 4 Spieler anwesend sein (aktuell: ${validPlayers.length})` 
+      });
+      return;
+    }
+
+    // Initialisiere das Spiel
+    const deck = createDeck(game.settings.playWithNine);
+    shuffleDeck(deck);
+
+    // Teile die Karten auf
+    const hands = dealCards(deck, 4);
+    game.players.forEach((player, index) => {
+      player.hand = hands[index];
+    });
+
+    // Setze den Spielstatus
+    game.started = true;
+    game.currentPlayer = 0;
+    game.tricks = [];
+    game.scores = game.players.map(() => 0);
+
+    console.log('Game started successfully:', {
+      gameId,
+      players: game.players.map(p => ({ id: p.id, name: p.name })),
+      hands: game.players.map(p => p.hand.length)
+    });
+
+    // Benachrichtige alle Spieler
+    io.to(gameId).emit('gameStarted', {
+      id: game.id,
+      settings: game.settings,
+      players: game.players.map(p => ({
+        id: p.id,
+        name: p.name,
+        hand: p.hand
+      })),
+      currentPlayer: game.currentPlayer,
+      scores: game.scores
+    });
+
+    // Aktualisiere die verfügbaren Spiele
+    broadcastAvailableGames();
   });
 
   socket.on('requestGames', () => {
     socket.emit('availableGames', Array.from(games.values()));
   });
 
-  socket.on('closeGame', (gameId) => {
+  socket.on('closeGame', ({ gameId }) => {
     const game = games.get(gameId);
-    if (!game) return;
+    if (!game) {
+      socket.emit('error', { message: 'Spiel nicht gefunden' });
+      return;
+    }
 
-    // Notify all players in the game
-    io.to(gameId).emit('gameClosed', { gameId });
-    
+    // Only allow game creator or test mode to close games
+    if (game.createdBy !== socket.id && !game.settings.isTestMode) {
+      socket.emit('error', { message: 'Nur der Spielersteller kann das Spiel schließen' });
+      return;
+    }
+
     // Remove the game
     games.delete(gameId);
     
-    // Update available games for all clients
-    io.emit('availableGames', Array.from(games.values()));
+    // Notify all clients in the game room
+    io.to(gameId).emit('gameClosed', { gameId });
+    
+    console.log(`Game ${gameId} closed by ${socket.playerName}`);
+    
+    // Update available games
+    broadcastAvailableGames();
   });
 
   socket.on('closeAllTestGames', () => {
-    // Find all test games
-    const testGames = Array.from(games.values()).filter(game => game.isTestMode);
-    
-    // Close each test game
-    testGames.forEach(game => {
-      // Notify all players in the game
-      io.to(game.id).emit('gameClosed', { gameId: game.id });
-      // Remove the game
-      games.delete(game.id);
-    });
-    
-    // Update available games for all players
-    io.emit('availableGames', Array.from(games.values()));
+    let gamesRemoved = 0;
+    for (const [gameId, game] of games) {
+      if (game.settings.isTestMode) {
+        games.delete(gameId);
+        io.to(gameId).emit('gameClosed', { gameId });
+        gamesRemoved++;
+      }
+    }
+    console.log(`Closed ${gamesRemoved} test games`);
+    broadcastAvailableGames();
   });
 
   socket.on('disconnect', () => {
@@ -330,6 +525,25 @@ function startGame(gameId) {
       players: g.players,
       createdBy: g.createdBy
     }));
+  io.emit('availableGames', availableGames);
+}
+
+// Helper function to broadcast available games
+function broadcastAvailableGames() {
+  const availableGames = Array.from(games.values())
+    .filter(game => game.players.length < 4 && !game.started)
+    .map(game => ({
+      id: game.id,
+      settings: game.settings,
+      players: game.players.map(p => ({
+        id: p.id,
+        name: p.name || players.get(p.id)?.name || 'Unbekannt'
+      })),
+      createdBy: game.createdBy,
+      isTestMode: game.isTestMode
+    }));
+  
+  console.log('Broadcasting available games:', availableGames);
   io.emit('availableGames', availableGames);
 }
 
